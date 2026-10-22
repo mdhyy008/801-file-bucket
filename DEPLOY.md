@@ -9,7 +9,7 @@
 - [五、局域网访问与防火墙](#五局域网访问与防火墙)
 - [六、数据备份与恢复](#六数据备份与恢复)
 - [七、升级](#七升级)
-- [八、反向代理与 HTTPS（可选）](#八反向代理与-https可选)
+- [八、反向代理与访问方式（可选）](#八反向代理与访问方式可选)
 - [九、常见问题](#九常见问题)
 
 ## 一、环境要求
@@ -301,14 +301,34 @@ sudo systemctl status 801-file-bucket
 
 升级前建议先备份 `data/`。程序本身不修改数据库结构时可直接回退程序文件；若已手动迁移数据，请用备份恢复。
 
-## 八、反向代理与 HTTPS（可选）
+## 八、反向代理与访问方式（可选）
 
-如果需要域名、HTTPS 或多服务共用 80/443 端口，可以用 Nginx 反向代理。示例：
+801 文件桶默认监听 `0.0.0.0:51001`，可以部署在任意一台客户端能访问到的服务器上。常见有三种访问方式：
+
+| 方式 | 访问地址 | 适用场景 |
+| --- | --- | --- |
+| 直接访问 | `http://服务器IP:51001` | 内网使用、只跑这一个服务，最简单 |
+| 反向代理 + 服务器 IP | `http://服务器IP` 或 `http://服务器IP:8080` | 隐藏 51001、与其他服务共用 80/443 端口 |
+| 反向代理 + 域名 | `http://files.example.com` 或 `https://files.example.com` | 需要域名、HTTPS 或对外提供访问 |
+
+### 方式一：直接使用服务器 IP 和端口
+
+不需要 Nginx。部署并启动服务后，放行防火墙的 TCP 51001，其他设备访问：
+
+```
+http://服务器IP:51001
+```
+
+如果服务器在路由器后面，需要把 51001 端口转发到服务器，外网才能访问；仅内网使用则不需要。
+
+### 方式二：通过 Nginx 反向代理，用服务器 IP 访问
+
+如果希望用 80/443 端口访问、隐藏 51001，或同一台服务器上还跑着其他服务，可以让 Nginx 转发：
 
 ```nginx
 server {
     listen 80;
-    server_name files.example.com;
+    server_name _;
 
     # 必须大于应用的单文件上限（默认 100 MB）
     client_max_body_size 1024m;
@@ -325,14 +345,64 @@ server {
 }
 ```
 
-启用 HTTPS 时可使用 Certbot：
+保存后执行：
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+访问 `http://服务器IP` 即可。如果 80 端口已被其他网站占用，把 `listen 80;` 改成 `listen 8080;`，访问地址相应变成 `http://服务器IP:8080`。
+
+### 方式三：通过反向代理配置域名
+
+1. 在域名服务商处添加解析记录：
+
+   | 类型 | 主机记录 | 记录值 |
+   | --- | --- | --- |
+   | A | `files`（或 `@`） | 服务器的公网 IP |
+   | AAAA | `files`（可选） | 服务器的 IPv6 地址 |
+
+2. 等解析生效（通常几分钟到几小时），将 Nginx 配置中的 `server_name _;` 改成域名：
+
+```nginx
+server {
+    listen 80;
+    server_name files.example.com;
+
+    client_max_body_size 1024m;
+
+    location / {
+        proxy_pass http://127.0.0.1:51001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+3. 重新加载 Nginx 后，访问 `http://files.example.com`。
+
+如果服务器位于 NAT/路由器之后，还需要在路由器上把 80 端口转发到服务器；使用 HTTPS 时同时转发 443。
+
+> 服务器在中国大陆时，绑定域名对外提供网站服务通常需要完成 ICP 备案，否则 80/443 可能被服务商拦截。
+
+启用 HTTPS 时可使用 Certbot 自动申请证书：
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d files.example.com
 ```
 
-反向代理下仍需确保 `client_max_body_size` 不小于后台上传上限，否则大文件会在代理层被拒绝。
+### 反向代理注意事项
+
+- `client_max_body_size` 必须不小于后台上传上限，否则大文件会在代理层被拒绝。
+- Nginx 与 801 文件桶部署在同一台机器时，应用会通过 `X-Forwarded-For` 取到真实客户端 IP，无需额外配置；如果代理在另一台机器上，需要设置环境变量 `FORWARDED_ALLOW_IPS` 为代理的 IP。
+- 使用反向代理后，应关闭路由器上对 51001 的端口转发，只对外开放 80/443。
+- 反向代理层可以再叠加访问控制（如仅允许内网来源、添加 Basic Auth），降低文件桶直接暴露的风险。
 
 ## 九、常见问题
 

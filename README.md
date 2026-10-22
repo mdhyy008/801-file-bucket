@@ -50,7 +50,9 @@ pip install -r requirements.txt
 python main.py
 ```
 
-默认监听 `0.0.0.0:51001`，浏览器访问 `http://服务器IP:51001`。生产环境建议用 systemd 托管，完整的 Linux 部署、防火墙、备份与升级步骤见 **[DEPLOY.md](DEPLOY.md)**。
+默认监听 `0.0.0.0:51001`，浏览器访问 `http://服务器IP:51001`。生产环境建议用 systemd 托管。
+
+部署在服务器上时，也可以让 Nginx 反向代理，用服务器 IP 的 80/443 端口访问，或绑定域名并启用 HTTPS。完整的 Linux 部署、反向代理与域名配置、防火墙、备份和升级步骤见 **[DEPLOY.md](DEPLOY.md)**。
 
 ## 首次使用
 
